@@ -154,3 +154,14 @@ fwrite(
   dt_stable,
   file = "/mnt/eo/EU_unmixing/data/LUCAS/LUCAS_multiyear_filtered.csv"
 )
+
+
+### read csc
+library(readr)
+LUCAS_multiyear_filtered <- read_csv("/mnt/eo/EU_unmixing/data/LUCAS/LUCAS_multiyear_filtered.csv")
+
+LUCAS_multiyear_filtered <- LUCAS_multiyear_filtered[, -c(1:3)]
+
+
+
+
