@@ -166,12 +166,17 @@ spectra <- fread(file_path)
 str(spectra)
 
 ds <- spectra
+ds <- ds %>%
+  mutate(across(-c(source, SampleID, PointID, NUTS_0, SampleN), as.numeric))
+
 ds <- pivot_longer(ds, -c(source, SampleID, PointID, NUTS_0, SampleN))
 ds$name <- substr(ds$name, 2,nchar(ds$name))
 ds$wl <- as.numeric(ds$name)
 
 ds$reflectance <- 1/(10^ds$value)
 ds <- subset(ds, ds$wl >= 426)
+
+
 
 
 
