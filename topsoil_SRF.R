@@ -38,6 +38,28 @@ coerce_wl_cols_numeric <- function(df, wl_cols) {
     )
 }
 
+
+
+
+
+
+library(dplyr)
+library(ggplot2)
+
+id <- "18211_1"  # replace with any sample from your plot
+
+raw_one <- ds %>%
+  filter(SampleID == id) %>%
+  filter(!is.na(reflectance))
+
+range(raw_one$reflectance, na.rm = TRUE)
+
+ggplot(raw_one, aes(wl, reflectance)) +
+  geom_line() +
+  labs(title = paste("Raw hyperspectral curve:", id),
+       x = "Wavelength (nm)", y = "reflectance (as stored)")
+
+
 # Report columns that still contain many NAs after coercion (often parsing problems)
 report_bad_wl_cols <- function(df, wl_cols, na_frac_threshold = 0.5) {
   na_frac <- sapply(df[wl_cols], function(v) mean(is.na(v)))
