@@ -106,3 +106,26 @@ tab_lc1 <- dt[, .(n_point_id = uniqueN(point_id)), by = lc1][order(lc1)]
 print(tab_lc1)
 
 
+
+library(data.table)
+library(terra)
+
+dt <- as.data.table(as.data.frame(pts_filt))
+dt[, row_id := .I]
+dt[, point_id := trimws(as.character(point_id))]
+
+# one row per point_id
+dt_unique <- dt[, .SD[1], by = point_id]
+
+# SUBSET BY ROW INDEX (not %in%)
+pts_unique <- pts_filt[dt_unique$row_id, ]
+
+# sanity checks (by point_id)
+stopifnot(length(unique(pts_unique$point_id)) == nrow(pts_unique))
+
+# write
+out_csv_unique  <- "/mnt/dss_project/lmandl/_unmixing/_spectral_library/candidates_buffer60_unique.csv"
+out_gpkg_unique <- "/mnt/dss_project/lmandl/_unmixing/_spectral_library/candidates_buffer60_unique.gpkg"
+
+write.csv(as.data.frame(pts_unique), out_csv_unique, row.names = FALSE)
+writeVector(pts_unique, out_gpkg_unique, overwrite = TRUE)
