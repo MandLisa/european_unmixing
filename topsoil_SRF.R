@@ -1,113 +1,101 @@
+# ============================================================
+# LUCAS 2015 soil spectra -> Landsat 8/9 (OLI/OLI-2) simulation
+# Full end-to-end script (data.table-safe) + plots + write files
+# ============================================================
+
 library(dplyr)
 library(tidyr)
 library(stringr)
 library(readr)
-
-# ============================================================
-# A) INPUTS
-# ============================================================
-
-# 1) Your raw wide LUCAS spectra data frame:
-#    It must have metadata columns + thousands of wavelength columns named like "400", "400.5", ..., "2499.5"
-#    Here I assume it is called `raw_wide`. If yours is called differently, rename accordingly.
-# raw_wide <- read_csv("path/to/lucas.csv", show_col_types = FALSE)
-
-# 2) Landsat SRF directory (ch_res_1..9.txt or NWP-SAF rtcoef... files)
-srf_dir <- "/mnt/dss_project/lmandl/_unmixing/SRF"
-
-# 3) Metadata columns you want to retain (adjust to your table)
-meta_cols <- c("SampleID", "PointID", "CLIMA_Cod", "Elevation", "Slope", "Aspect",
-               "BioGeo", "Soil_Group", "Soil_Code")
-
-# ============================================================
-# B) 1) WIDE -> LONG SPECTRA (ROBUST, KEEPS SWIR)
-# ============================================================
-
-# Identify wavelength columns purely by column NAME being numeric (allows decimals)
-get_wl_cols <- function(df) {
-  wl_cols <- names(df)[str_detect(names(df), "^\\d+(?:\\.\\d+)?$")]
-  if (length(wl_cols) == 0) stop("No wavelength columns detected by name. Check column names.")
-  wl_cols
-}
-
-# Safely coerce wavelength columns to numeric without dropping columns
-coerce_wl_cols_numeric <- function(df, wl_cols) {
-  df %>%
-    mutate(
-      across(all_of(wl_cols), ~ suppressWarnings(as.numeric(.)))
-    )
-}
-
-
-
-
-
-
-library(dplyr)
 library(ggplot2)
 
-id <- "18211_1"  # replace with any sample from your plot
+# ------------------------------------------------------------
+# 0) INPUTS (ADAPT THESE)
+# ------------------------------------------------------------
 
-raw_one <- ds %>%
-  filter(SampleID == id) %>%
-  filter(!is.na(reflectance))
+# Your wide LUCAS table already loaded in memory:
+# It must contain meta columns + wavelength columns named like "400", "400.5", ..., "2499.5"
+# You said this object is called:
+file_path <- "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/spectra_EU28_merged.csv"
 
-range(raw_one$reflectance, na.rm = TRUE)
+spectra <- fread(file_path)
 
-ggplot(raw_one, aes(wl, reflectance)) +
-  geom_line() +
-  labs(title = paste("Raw hyperspectral curve:", id),
-       x = "Wavelength (nm)", y = "reflectance (as stored)")
+raw_wide <- spectra
 
+# folder containing SRF files (either ch_res_1..9.txt or rtcoef...ch01..ch09.txt)
+srf_dir <- "/mnt/dss_project/lmandl/_unmixing/SRF"
 
-# Report columns that still contain many NAs after coercion (often parsing problems)
-report_bad_wl_cols <- function(df, wl_cols, na_frac_threshold = 0.5) {
-  na_frac <- sapply(df[wl_cols], function(v) mean(is.na(v)))
-  bad <- names(na_frac)[na_frac > na_frac_threshold]
-  list(na_fraction = na_frac, bad_cols = bad)
-}
+# output folder
+out_dir <- "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015"
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
-# ---- MAIN: create ds_long ----
-# Replace `raw_wide` with your wide data frame object name
-wl_cols <- get_wl_cols(spectra)
+# metadata columns to keep (only those present will be kept)
+meta_cols <- c("source", "SampleID", "PointID", "NUTS_0", "SampleN",
+               "CLIMA_Cod", "Elevation", "Slope", "Aspect",
+               "BioGeo", "Soil_Group", "Soil_Code")
 
-# Confirm the wavelength range encoded in the column names
+# IMPORTANT: LUCAS spectra value domain
+# Colleague script uses: reflectance = 1/(10^value)  (== 10^(-value))
+# Set this TRUE if your wavelength columns are in that "value" domain (common for LUCAS exports).
+apply_lucas_transform <- TRUE
+
+# If you need additional filtering (e.g. wl >= 426 as in colleague script)
+min_wl <- 426
+
+# Reflective bands to use for "spectral signature" plots (exclude pan/cirrus by default)
+bands_plot <- c("L_B1","L_B2","L_B3","L_B4","L_B5","L_B6","L_B7")
+
+# ------------------------------------------------------------
+# 1) WIDE -> LONG (KEEP FULL VNIR+SWIR) + LUCAS TRANSFORM
+# ------------------------------------------------------------
+
+# Detect wavelength columns by name (numeric, allow decimals)
+wl_cols <- names(raw_wide)[str_detect(names(raw_wide), "^\\d+(?:\\.\\d+)?$")]
+if (length(wl_cols) == 0) stop("No wavelength columns detected. Check your column names.")
+
 wl_numeric <- as.numeric(wl_cols)
-cat("Wavelength columns detected:", length(wl_cols), "\n")
-cat("Wavelength range (from column names):", range(wl_numeric, na.rm = TRUE), "\n")
+cat("Detected", length(wl_cols), "wavelength columns.\n")
+cat("Wavelength range from column names:", paste(range(wl_numeric, na.rm=TRUE), collapse=" - "), "\n")
 
-# Coerce all wavelength columns to numeric
-raw_wide_num <- coerce_wl_cols_numeric(spectra, wl_cols)
+# Keep only meta columns that exist
+meta_present <- meta_cols[meta_cols %in% names(raw_wide)]
+if (!("SampleID" %in% meta_present)) stop("SampleID must exist in your table.")
 
-# Optional: detect problematic wavelength columns (helps debugging)
-report_bad_wl_cols <- function(df, wl_cols, na_frac_threshold = 0.5) {
-  na_frac <- sapply(wl_cols, function(col) mean(is.na(df[[col]])))
-  bad <- names(na_frac)[na_frac > na_frac_threshold]
-  list(na_fraction = na_frac, bad_cols = bad)
-}
+# Coerce wavelength columns to numeric robustly (data.table-safe)
+raw_wide_num <- raw_wide %>%
+  mutate(across(all_of(wl_cols), ~ suppressWarnings(as.numeric(.))))
 
-
-# Keep only metadata columns that exist
-meta_present <- meta_cols[meta_cols %in% names(raw_wide_num)]
-if (!("SampleID" %in% meta_present)) stop("SampleID must be present in raw_wide_num.")
-
-# Pivot long (this keeps full VNIR+SWIR because wl_cols were detected by name)
+# Pivot longer into "value" first
 ds <- raw_wide_num %>%
   select(all_of(meta_present), all_of(wl_cols)) %>%
   pivot_longer(cols = all_of(wl_cols),
                names_to = "wl",
-               values_to = "reflectance") %>%
+               values_to = "value") %>%
   mutate(
     wl = as.numeric(wl),
-    reflectance = as.numeric(reflectance)
-  )
+    value = as.numeric(value)
+  ) %>%
+  filter(!is.na(value)) %>%
+  filter(wl >= min_wl)
 
-# Sanity check: you should now see SWIR coverage
-cat("After pivot_longer(): wl range =", paste(range(ds$wl, na.rm = TRUE), collapse = " - "), "\n")
+# Apply LUCAS transform if needed (as in your colleague script)
+if (apply_lucas_transform) {
+  ds <- ds %>% mutate(reflectance = 1/(10^value))  # == 10^(-value)
+} else {
+  ds <- ds %>% mutate(reflectance = value)
+}
 
-# ============================================================
-# C) 2) PREPARE SPECTRA FOR SRF JOIN
-# ============================================================
+cat("After pivot_longer(): wl range =", paste(range(ds$wl, na.rm=TRUE), collapse=" - "), "\n")
+cat("Reflectance summary (after transform setting):\n")
+print(ds %>% summarise(min=min(reflectance,na.rm=TRUE),
+                       p01=quantile(reflectance,0.01,na.rm=TRUE),
+                       med=median(reflectance,na.rm=TRUE),
+                       p99=quantile(reflectance,0.99,na.rm=TRUE),
+                       max=max(reflectance,na.rm=TRUE)))
+
+# ------------------------------------------------------------
+# 2) PREP SPECTRA FOR SRF JOIN (mean reflectance per integer nm)
+# ------------------------------------------------------------
 
 round2 <- function(x, n) {
   posneg <- sign(x)
@@ -123,15 +111,16 @@ ds_spec <- ds %>%
   group_by(across(all_of(c("SampleID", setdiff(meta_present, "SampleID"), "wl_r")))) %>%
   summarise(mean_refl = mean(reflectance, na.rm = TRUE), .groups = "drop")
 
-cat("Prepared spectra wl_r range =", paste(range(ds_spec$wl_r, na.rm = TRUE), collapse = " - "), "\n")
+cat("Prepared ds_spec wl_r range =", paste(range(ds_spec$wl_r, na.rm=TRUE), collapse=" - "), "\n")
 
-# ============================================================
-# D) 3) READ SRFs (supports your ch_res_*.txt format)
-# ============================================================
+# ------------------------------------------------------------
+# 3) READ SRFs (ch_res_*.txt or rtcoef_...txt) -> srf_wide
+# ------------------------------------------------------------
 
 read_chres_srf <- function(path) {
   x <- readLines(path, warn = FALSE)
   
+  # first line that contains exactly two numbers (wn + response)
   two_num_pat <- "^\\s*[-+]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\s+[-+]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\s*$"
   first_data <- which(str_detect(x, two_num_pat))[1]
   if (is.na(first_data)) stop("No numeric SRF block found in: ", path)
@@ -147,27 +136,17 @@ read_chres_srf <- function(path) {
     select(wl_nm, response)
 }
 
-wmean_safe <- function(x, w) {
-  ok <- is.finite(x) & is.finite(w) & (w > 0)
-  if (!any(ok)) return(NA_real_)
-  sum(x[ok] * w[ok]) / sum(w[ok])
-}
-
-# Locate SRF files: handle BOTH naming schemes
+# locate SRF files
 files_chres <- list.files(srf_dir, pattern = "^ch_res_\\d+\\.txt$", full.names = TRUE)
 files_rtcoef <- list.files(srf_dir, pattern = "^rtcoef_landsat_9_oli_srf_ch\\d{2}\\.txt$", full.names = TRUE)
-
 files <- if (length(files_chres) > 0) files_chres else files_rtcoef
 if (length(files) != 9) stop("Expected 9 SRF files in ", srf_dir, " but found ", length(files))
 
-# Channel -> band mapping
-# For ch_res_1..9 : "1".."9"
-# For rtcoef ... ch01..ch09 : "01".."09"
+# channel -> band mapping
 chan_to_band_1 <- c("1"="B1","2"="B2","3"="B3","4"="B4","5"="B5","6"="B6","7"="B7","8"="B8","9"="B9")
 chan_to_band_2 <- c("01"="B1","02"="B2","03"="B3","04"="B4","05"="B5","06"="B6","07"="B7","08"="B8","09"="B9")
 
 srf_long <- bind_rows(lapply(files, function(f) {
-  
   bn <- basename(f)
   
   if (str_detect(bn, "^ch_res_\\d+\\.txt$")) {
@@ -191,13 +170,19 @@ srf_wide <- srf_long %>%
   pivot_wider(names_from = band, values_from = response, values_fill = 0) %>%
   rename(SR_WL = wl_r)
 
-cat("SRF wl range =", paste(range(srf_wide$SR_WL, na.rm = TRUE), collapse = " - "), "\n")
+cat("SRF wl range =", paste(range(srf_wide$SR_WL, na.rm=TRUE), collapse=" - "), "\n")
 
-# ============================================================
-# E) 4) JOIN + CONVOLVE TO LANDSAT BANDS (B1..B9)
-# ============================================================
+# ------------------------------------------------------------
+# 4) JOIN + CONVOLVE TO LANDSAT BANDS
+# ------------------------------------------------------------
 
-# Restrict SRF to spectral range present in spectra (faster, cleaner)
+wmean_safe <- function(x, w) {
+  ok <- is.finite(x) & is.finite(w) & is.finite(x) & (w > 0)
+  if (!any(ok)) return(NA_real_)
+  sum(x[ok] * w[ok]) / sum(w[ok])
+}
+
+# Restrict SRF to available wavelengths in ds_spec
 wl_min <- floor(min(ds_spec$wl_r, na.rm = TRUE))
 wl_max <- ceiling(max(ds_spec$wl_r, na.rm = TRUE))
 srf_wide_sub <- srf_wide %>% filter(SR_WL >= wl_min, SR_WL <= wl_max)
@@ -206,8 +191,7 @@ ds_join <- ds_spec %>% left_join(srf_wide_sub, by = c("wl_r" = "SR_WL"))
 
 band_cols <- intersect(c("B1","B2","B3","B4","B5","B6","B7","B8","B9"), names(ds_join))
 bands_overlap <- band_cols[colSums(ds_join[, band_cols] > 0, na.rm = TRUE) > 0]
-
-cat("Bands with overlap (computable):", paste(bands_overlap, collapse = ", "), "\n")
+cat("Bands with overlap (computable):", paste(bands_overlap, collapse=", "), "\n")
 
 ds_l9 <- ds_join %>%
   group_by(across(all_of(c("SampleID", setdiff(meta_present, "SampleID"))))) %>%
@@ -219,22 +203,14 @@ ds_l9 <- ds_join %>%
 ds_l9_long <- ds_l9 %>%
   pivot_longer(cols = starts_with("L_"), names_to = "band", values_to = "value")
 
-# ============================================================
-# F) OPTIONAL: central wavelengths (only for bands computed)
-# ============================================================
+# Attach approximate CWLs (nm) (used only for plotting x-axis)
 cwl_l89_full <- c(L_B1=443, L_B2=482, L_B3=561, L_B4=655, L_B5=865, L_B6=1610, L_B7=2200, L_B8=590, L_B9=1375)
-
 ds_l9_long <- ds_l9_long %>%
   mutate(cwl = unname(cwl_l89_full[band]))
 
-# Done:
-# - ds      : long spectra (full VNIR+SWIR if present in raw_wide)
-# - srf_wide: SRF table
-# - ds_l9   : simulated Landsat bands per sample
-# - ds_l9_long: long version for plotting
-
-out_dir <- "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015"
-dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+# ------------------------------------------------------------
+# 5) WRITE OUTPUTS
+# ------------------------------------------------------------
 
 out_csv_wide <- file.path(out_dir, "LUCAS_topsoil_reflectance_wide.csv")
 out_csv_long <- file.path(out_dir, "LUCAS_topsoil_reflectance_long.csv")
@@ -242,22 +218,90 @@ out_csv_long <- file.path(out_dir, "LUCAS_topsoil_reflectance_long.csv")
 write.csv(ds_l9, out_csv_wide, row.names = FALSE)
 write.csv(ds_l9_long, out_csv_long, row.names = FALSE)
 
+cat("Wrote:\n", out_csv_wide, "\n", out_csv_long, "\n")
 
+# ------------------------------------------------------------
+# 6) PLOTS: spectral signatures from Landsat-simulated bands (ds_l9_long)
+# ------------------------------------------------------------
 
+# (A) Subset of SampleIDs, faceted
 set.seed(1)
 n_samples <- 24
-ids <- sample(unique(ds_l9_long$SampleID), n_samples)
+ids <- sample(unique(ds_l9_long$SampleID), min(n_samples, length(unique(ds_l9_long$SampleID))))
 
-p1 <- ds_l9_long %>%
+p_sig_subset <- ds_l9_long %>%
   filter(SampleID %in% ids) %>%
   filter(!is.na(value)) %>%
-  # keep reflective bands only (optional; drop pan/cirrus if you want)
-  filter(band %in% c("L_B1","L_B2","L_B3","L_B4","L_B5","L_B6","L_B7")) %>%
+  filter(band %in% bands_plot) %>%
   ggplot(aes(x = cwl, y = value, group = SampleID)) +
   geom_line() +
   geom_point(size = 1.6) +
   facet_wrap(~SampleID) +
-  labs(x = "Wavelength (nm)", y = "Simulated reflectance",
-       title = "Landsat-simulated soil spectral signatures (sample subset)")
+  theme_minimal() +
+  labs(x = "Wavelength (nm)", y = "Reflectance",
+       title = "")
 
-print(p1)
+plot(p_sig_subset)
+
+ggsave(file.path(out_dir, "soil_signatures_Landsat_subset.png"),
+       plot = p_sig_subset, width = 14, height = 8, dpi = 300)
+
+# (B) Median ± IQR by Soil_Group (if present)
+if ("Soil_Group" %in% names(ds_l9_long)) {
+  sig_group <- ds_l9_long %>%
+    filter(!is.na(value)) %>%
+    filter(band %in% bands_plot) %>%
+    group_by(Soil_Group, band, cwl) %>%
+    summarise(
+      med = median(value, na.rm = TRUE),
+      q25 = quantile(value, 0.25, na.rm = TRUE),
+      q75 = quantile(value, 0.75, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # limit to top groups for readability
+  top_k <- 9
+  top_groups <- ds_l9 %>%
+    count(Soil_Group, sort = TRUE) %>%
+    slice_head(n = top_k) %>%
+    pull(Soil_Group)
+  
+  sig_group <- sig_group %>% filter(Soil_Group %in% top_groups)
+  
+  p_sig_group <- ggplot(sig_group, aes(x = cwl, y = med, group = Soil_Group)) +
+    geom_line() +
+    geom_point(size = 1.6) +
+    geom_errorbar(aes(ymin = q25, ymax = q75), width = 0) +
+    facet_wrap(~Soil_Group) +
+    theme_minimal() +
+    labs(x = "Wavelength (nm)", y = "Reflectance (median ± IQR)",
+         title = "Landsat-simulated soil signatures by Soil_Group (top groups)")
+  
+  ggsave(file.path(out_dir, "soil_signatures_Landsat_bySoilGroup.png"),
+         plot = p_sig_group, width = 14, height = 8, dpi = 300)
+}
+
+# (C) Overlay for one sample: raw hyperspectral vs Landsat points (QC)
+# pick one sample
+one_id <- ids[1]
+
+raw_one <- ds %>%
+  filter(SampleID == one_id) %>%
+  filter(!is.na(reflectance))
+
+ls_one <- ds_l9_long %>%
+  filter(SampleID == one_id) %>%
+  filter(band %in% bands_plot)
+
+p_overlay <- ggplot() +
+  geom_line(data = raw_one, aes(x = wl, y = reflectance), linewidth = 0.7) +
+  geom_line(data = ls_one,  aes(x = cwl, y = value), linewidth = 0.6) +
+  geom_point(data = ls_one, aes(x = cwl, y = value), size = 2.5) +
+  theme_minimal() +
+  labs(x = "Wavelength (nm)", y = "Reflectance",
+       title = paste("QC overlay: hyperspectral vs Landsat-simulated:", one_id))
+
+ggsave(file.path(out_dir, "QC_overlay_hyperspectral_vs_Landsat.png"),
+       plot = p_overlay, width = 10, height = 6, dpi = 300)
+
+cat("Plots saved in: ", out_dir, "\n")
