@@ -352,3 +352,30 @@ topsoil_mean_long_unique <- topsoil_reflectance_long %>%
     .groups = "drop"
   )
 
+
+### visualise sample pairs
+library(dplyr)
+library(ggplot2)
+library(stringr)
+
+# create base sample ID (without _1 / _2)
+plot_df <- topsoil_reflectance_long %>%
+  mutate(SampleID_base = str_remove(SampleID, "_[0-9]+$"))
+
+# choose a few example samples
+example_ids <- unique(plot_df$SampleID_base)[1:6]
+
+plot_df %>%
+  filter(SampleID_base %in% example_ids) %>%
+  ggplot(aes(x = cwl, y = value, color = SampleID, group = SampleID)) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.5) +
+  facet_wrap(~ SampleID_base, scales = "free_y") +
+  labs(
+    x = "Wavelength (nm)",
+    y = "Reflectance",
+    color = "Replicate"
+  ) +
+  theme_minimal()
+
+
