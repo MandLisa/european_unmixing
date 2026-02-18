@@ -479,6 +479,33 @@ st_write(topsoil_final_long_sf,
          "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_final_long.gpkg",
          layer = "spectra_long")
 
+### create subsample per country
+set.seed(42)
+
+n_per_country <- 10
+
+topsoil_wide_sub <- topsoil_final_wide %>%
+  group_by(NUTS_0) %>%
+  slice_sample(prop = 1) %>%   # shuffle within country
+  slice_head(n = n_per_country) %>%
+  ungroup()
+
+readr::write_csv(topsoil_wide_sub, "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_wide_subset.csv")
+
+
+topsoil_wide_sub_sf <- st_as_sf(
+  topsoil_wide_sub,
+  coords = c("X", "Y"),
+  crs = 4326
+)
+
+# write as gpkg
+st_write(
+  topsoil_wide_sub_sf,
+  "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_wide_subset.gpkg",
+  layer = "spectra_subsample",
+  delete_dsn = TRUE
+)
 
 
 
