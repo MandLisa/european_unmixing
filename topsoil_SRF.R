@@ -8,6 +8,7 @@ library(tidyr)
 library(stringr)
 library(readr)
 library(ggplot2)
+library(data.table)
 
 # ------------------------------------------------------------
 # 0) INPUTS (ADAPT THESE)
@@ -305,3 +306,49 @@ ggsave(file.path(out_dir, "QC_overlay_hyperspectral_vs_Landsat.png"),
        plot = p_overlay, width = 10, height = 6, dpi = 300)
 
 cat("Plots saved in: ", out_dir, "\n")
+
+
+### Re-import long spectra file
+library(readr)
+
+# file with Landsat-adjusted reflectance
+topsoil_reflectance_long <- read_csv("/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/LUCAS_topsoil_reflectance_long.csv")
+
+# file with land cover types
+topsoil_LC <- read_csv("/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/LUCAS2015_topsoildata_20200323/LUCAS_Topsoil_2015_20200323.csv")
+
+# ad lc info to topsoil_reflectance_long
+topsoil_reflectance_long <- topsoil_reflectance_long %>%
+  left_join(
+    topsoil_LC %>% select(Point_ID, LC1),
+    by = c("PointID" = "Point_ID")
+  )
+
+# filter only for woodland and bare land samples
+topsoil_reflectance_long <- topsoil_reflectance_long %>%
+  filter(grepl("^C", LC1) | LC1 == "F10")
+
+# convert to long
+topsoil_reflectance_wide <- topsoil_reflectance_long %>%
+  pivot_wider(
+    id_cols     = c(SampleID, source, PointID, NUTS_0, SampleN, LC1),
+    names_from  = band,
+    values_from = value
+  )
+
+# average sample pairs
+topsoil_mean_long <- topsoil_reflectance_long %>%
+  mutate(SampleID_base = str_remove(SampleID, "_[0-9]+$")) %>%  # 11001_1 -> 11001
+  group_by(SampleID_base, band) %>%
+  summarise(
+    value = mean(value, na.rm = TRUE),
+    # keep metadata (assuming constant within base ID)
+    source  = first(source),
+    PointID = first(PointID),
+    NUTS_0  = first(NUTS_0),
+    SampleN = first(SampleN),
+    cwl     = first(cwl),
+    LC1     = first(LC1),
+    .groups = "drop"
+  )
+
