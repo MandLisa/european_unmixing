@@ -510,7 +510,7 @@ st_write(
 ### do sampling again but account for a wide range of reflectances
 set.seed(42)
 
-n_per_country <- 20
+n_per_country <- 15
 n_bins <- 5
 
 band_cols <- grep("^L_B", names(topsoil_final_wide), value = TRUE)
@@ -540,37 +540,251 @@ topsoil_wide_sub <- topsoil_final_wide %>%
 
 
 ### visualise
+# 1) Build a unique lookup: band (e.g., "L_B1") -> center wavelength (cwl) -> new name (e.g., "B443")
+band_lookup <- topsoil_long_unique %>%
+  select(band, cwl) %>%
+  distinct() %>%
+  mutate(new_name = paste0("B", cwl))
 
-band_cols <- grep("^L_B", names(topsoil_wide_sub), value = TRUE)
+# Extract original spectral column names (must exist in the wide table)
+spectral_cols_old <- band_lookup$band
 
-plot_df <- topsoil_wide_sub %>%
-  pivot_longer(
-    cols = all_of(band_cols),
-    names_to = "band",
-    values_to = "reflectance"
-  ) %>%
-  left_join(
-    topsoil_long_unique %>%
-      select(band, cwl) %>%
-      distinct(),
-    by = "band"
+# 2) Rename only the spectral band columns in the wide subsample
+topsoil_wide_sub_renamed <- topsoil_wide_sub %>%
+  rename_with(
+    .fn   = ~ band_lookup$new_name[match(.x, band_lookup$band)],
+    .cols = all_of(spectral_cols_old)
   )
 
-# order bands by wavelength
-band_order <- plot_df %>%
-  distinct(band, cwl) %>%
+# New spectral column names after renaming (e.g., B443, B482, ...)
+spectral_cols_new <- band_lookup$new_name
+
+# 3) Pivot ONLY the spectral columns to long format for plotting
+plot_df <- topsoil_wide_sub_renamed %>%
+  pivot_longer(
+    cols = all_of(spectral_cols_new),
+    names_to = "band",
+    values_to = "reflectance"
+  )
+
+# 4) Ensure x-axis is ordered by wavelength (ascending)
+band_order <- band_lookup %>%
   arrange(cwl) %>%
-  pull(band)
+  pull(new_name)
 
-plot_df$band <- factor(plot_df$band, levels = band_order)
+plot_df <- plot_df %>%
+  mutate(band = factor(band, levels = band_order))
 
-ggplot(plot_df, aes(x = cwl, y = reflectance)) +
-  geom_boxplot(aes(group = cwl), fill = "grey85", outlier.shape = NA) +
-  geom_jitter(width = 20, alpha = 0.5, size = 1.2) +
+# 5) Plot: boxplots + jittered points
+ggplot(plot_df, aes(x = band, y = reflectance)) +
+  geom_boxplot(fill = "grey85", outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.1, size = 1) +
   labs(
-    x = "Wavelength (nm)",
+    x = "",
     y = "Reflectance",
-    title = "Reflectance variability in subsampled LUCAS spectra"
+    title = ""
   ) +
   theme_minimal()
+
+
+
+# ------------------------------------------------------------
+# Create two per-country subsets from scratch and compare them
+# in ONE figure (boxplots + jitter) to see spectral variability.
+#
+# Subset A: Random per country (no variability control)
+# Subset B: Stratified per country by brightness quantiles
+#
+# Assumes:
+#   - topsoil_final_wide : wide table with NUTS_0 + spectral columns L_B1..L_B9
+#   - topsoil_long_unique: long table with mapping band -> cwl (for renaming)
+# ------------------------------------------------------------
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+set.seed(42)
+
+# ---------------------------
+# Parameters
+# ---------------------------
+n_per_country <- 50
+n_bins <- 5
+
+# spectral band columns in the wide table
+band_cols <- grep("^L_B", names(topsoil_final_wide), value = TRUE)
+
+# ---------------------------
+# Subset A: random per country
+# ---------------------------
+topsoil_wide_sub_random <- topsoil_final_wide %>%
+  group_by(NUTS_0) %>%
+  slice_sample(prop = 1) %>%              # shuffle within country
+  slice_head(n = n_per_country) %>%       # take first n
+  ungroup()
+
+# --------------------------------------------------------
+# Subset B: stratified per country by brightness (quantiles)
+# --------------------------------------------------------
+topsoil_wide_sub_stratified <- topsoil_final_wide %>%
+  rowwise() %>%
+  mutate(brightness = mean(c_across(all_of(band_cols)), na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(NUTS_0) %>%
+  mutate(br_bin = ntile(brightness, n_bins)) %>%
+  ungroup() %>%
+  group_by(NUTS_0, br_bin) %>%
+  slice_sample(prop = 1) %>%                                  # shuffle within stratum
+  slice_head(n = ceiling(n_per_country / n_bins)) %>%         # sample per bin
+  ungroup() %>%
+  group_by(NUTS_0) %>%
+  slice_sample(prop = 1) %>%                                  # shuffle within country
+  slice_head(n = n_per_country) %>%                           # trim to exactly n per country
+  ungroup()
+
+# ---------------------------------------
+# Prepare band -> wavelength renaming map
+# ---------------------------------------
+band_lookup <- topsoil_long_unique %>%
+  select(band, cwl) %>%
+  distinct() %>%
+  mutate(new_name = paste0("B", cwl))
+
+spectral_cols_old <- band_lookup$band
+spectral_cols_new <- band_lookup$new_name
+
+# helper: rename spectral columns and pivot to long for plotting
+prep_plot_df <- function(df_wide, label) {
+  df_wide %>%
+    # rename only the spectral columns (avoid grabbing metadata like br_bin/brightness)
+    rename_with(
+      ~ band_lookup$new_name[match(.x, band_lookup$band)],
+      .cols = all_of(spectral_cols_old)
+    ) %>%
+    pivot_longer(
+      cols = all_of(spectral_cols_new),
+      names_to = "band",
+      values_to = "reflectance"
+    ) %>%
+    mutate(sample_type = label)
+}
+
+# long plot tables
+plot_random     <- prep_plot_df(topsoil_wide_sub_random,     "Random per country")
+plot_stratified <- prep_plot_df(topsoil_wide_sub_stratified, "Stratified by brightness")
+
+plot_df <- bind_rows(plot_random, plot_stratified)
+
+# order bands by wavelength (for physically meaningful x-axis)
+band_order <- band_lookup %>% arrange(cwl) %>% pull(new_name)
+plot_df <- plot_df %>%
+  mutate(
+    band = factor(band, levels = band_order),
+    sample_type = factor(sample_type, levels = c("Random per country", "Stratified by brightness"))
+  )
+
+
+# ---------------------------
+# Plot: one figure comparison
+# ---------------------------
+ggplot(plot_df, aes(x = band, y = reflectance)) +
+  geom_boxplot(
+    aes(fill = sample_type),
+    position = position_dodge(width = 0.75),
+    outlier.shape = NA,
+    alpha = 0.6
+  ) +
+  geom_jitter(
+    aes(color = sample_type),
+    position = position_jitterdodge(jitter.width = 0.12, dodge.width = 0.75),
+    alpha = 0.3,
+    size = 1.0
+  ) +
+  labs(
+    x = "",
+    y = "Reflectance",
+    fill = "Subset",
+    color = "Subset",
+    title = ""
+  ) +
+  theme_minimal()
+
+
+# create spectral-variability-aware dataset and export it
+# ------------------------------------------------------------
+# Spectral-variability-aware subsampling:
+# For EACH country (NUTS_0) and EACH brightness bin, sample 5 points.
+# Then export as CSV and GPKG.
+#
+# Assumes:
+#   - topsoil_final_wide has columns: NUTS_0, X, Y, and spectral bands L_B1..L_B9
+#   - You want brightness bins computed WITHIN each country
+# -----------------------------------------------------------
+
+set.seed(42)
+
+# ---------------------------
+# Parameters
+# ---------------------------
+n_bins <- 3
+n_per_bin <- 5
+
+# Identify spectral band columns
+band_cols <- grep("^L_B", names(topsoil_final_wide), value = TRUE)
+
+# ---------------------------
+# 1) Compute brightness + bins (per country)
+# ---------------------------
+topsoil_binned <- topsoil_final_wide %>%
+  # brightness proxy = mean reflectance across bands
+  rowwise() %>%
+  mutate(brightness = mean(c_across(all_of(band_cols)), na.rm = TRUE)) %>%
+  ungroup() %>%
+  # create quantile bins within each country
+  group_by(NUTS_0) %>%
+  mutate(br_bin = ntile(brightness, n_bins)) %>%
+  ungroup()
+
+# ---------------------------
+# 2) Sample 5 per country × bin
+#    (if a stratum has < 5 samples, it keeps all available)
+# ---------------------------
+topsoil_wide_sub_var <- topsoil_binned %>%
+  group_by(NUTS_0, br_bin) %>%
+  slice_sample(prop = 1) %>%        # shuffle within stratum
+  slice_head(n = n_per_bin) %>%     # take 5
+  ungroup()
+
+# Optional quick check: how many per country and bin?
+print(topsoil_wide_sub_var %>% count(NUTS_0, br_bin))
+
+# ---------------------------
+# 3) Export as CSV
+# ---------------------------
+out_csv  <- "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_wide_subset_varaware.csv"
+out_gpkg <- "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_wide_subset_varaware.gpkg"
+
+write_csv(topsoil_wide_sub_var, out_csv)
+
+# ---------------------------
+# 4) Export as GPKG
+# ---------------------------
+topsoil_wide_sub_var_sf <- st_as_sf(
+  topsoil_wide_sub_var,
+  coords = c("X", "Y"),
+  crs = 4326
+)
+
+st_write(
+  topsoil_wide_sub_var_sf,
+  out_gpkg,
+  layer = "spectra_subsample_varaware",
+  delete_dsn = TRUE
+)
+
+
+
+
+
 
