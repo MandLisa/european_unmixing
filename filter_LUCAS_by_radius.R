@@ -282,6 +282,54 @@ message("Wrote CSV:  ", out_csv)
 message("Wrote GPKG: ", out_gpkg)
 
 
+### remove pixels that are within disturbance sites
+library(terra)
+
+# -----------------------------
+# Inputs
+# -----------------------------
+gpkg_path  <- "/mnt/dss_project/lmandl/_unmixing/_spectral_library/candidates_buffer60_unique.gpkg"
+layer_name <- "candidates_buffer60_unique"          # set to your layer name (see note below)
+rast_path  <- "/mnt/eo/EFDA_v211/yod_aligned.tif"
+
+out_gpkg   <- "/mnt/dss_project/lmandl/_unmixing/_spectral_library/candidates_buffer_filtered.gpkg"
+
+# -----------------------------
+# Load data
+# -----------------------------
+pts <- vect(gpkg_path, layer = layer_name)
+r   <- rast(rast_path)
+
+# Ensure CRS match (project points to raster CRS)
+if (!same.crs(pts, r)) {
+  pts <- project(pts, crs(r))
+}
+
+# -----------------------------
+# Extract raster values at point locations
+# -----------------------------
+# This returns a data.frame with ID + raster values (one column per raster layer)
+v <- terra::extract(r, pts)
+
+# If raster has multiple layers, decide how to treat "not NA":
+# Option A (common): remove points if ANY layer is non-NA at that pixel
+keep <- apply(v[,-1, drop=FALSE], 1, function(x) all(is.na(x)))
+
+# Option B: if you want to use only the first raster layer, use:
+# keep <- is.na(v[[2]])
+
+# -----------------------------
+# Filter points: keep only those on NA pixels
+# -----------------------------
+pts_keep <- pts[keep]
+
+# -----------------------------
+# Write output (overwrite = TRUE)
+# -----------------------------
+writeVector(pts_keep, out_gpkg, overwrite = TRUE)
+
+pts_keep
+
 
 
 
