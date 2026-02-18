@@ -412,6 +412,22 @@ library(dplyr)
 topsoil_wide_sf <- topsoil_wide_sf %>%
   filter(if_all(starts_with("L_B"), ~ !is.na(.)))
 
+# extract coordinates
+coords_df <- topsoil_wide_sf %>%
+  mutate(
+    X = st_coordinates(.)[,1],
+    Y = st_coordinates(.)[,2]
+  ) %>%
+  st_drop_geometry() %>%
+  select(Point_ID, X, Y)
+
+coords_df_unique <- coords_df %>%
+  distinct(Point_ID, X, Y)
+
+# add to final df
+topsoil_final_wide <- topsoil_wide_unique %>%
+  left_join(coords_df_unique, by = c("PointID" = "Point_ID"))
+
 
 # for long table
 topsoil_long_sf <- pts %>%
@@ -422,4 +438,48 @@ topsoil_long_sf <- topsoil_long_sf %>%
   group_by(Point_ID) %>%
   filter(all(!is.na(band))) %>%
   ungroup()
+
+# extract coordinates
+coords_df_unique <- pts %>%
+  mutate(
+    X = st_coordinates(.)[,1],
+    Y = st_coordinates(.)[,2]
+  ) %>%
+  st_drop_geometry() %>%
+  distinct(Point_ID, X, Y)
+
+# attach
+topsoil_final_long <- topsoil_long_unique %>%
+  left_join(coords_df_unique, by = c("PointID" = "Point_ID"))
+
+# write long and wide tables as csv and gpkg
+readr::write_csv(topsoil_final_wide, "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_final_wide.csv")
+readr::write_csv(topsoil_final_long, "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_final_long.csv")
+
+# convert tables to sf
+topsoil_final_wide_sf <- st_as_sf(
+  topsoil_final_wide,
+  coords = c("X", "Y"),
+  crs = 4326
+)
+
+topsoil_final_long_sf <- st_as_sf(
+  topsoil_final_long,
+  coords = c("X", "Y"),
+  crs = 4326
+)
+
+# write as gpkg
+st_write(topsoil_final_wide_sf,
+         "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_final_wide.gpkg",
+         layer = "spectra_wide",
+         delete_dsn = TRUE)
+
+st_write(topsoil_final_long_sf,
+         "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_final_long.gpkg",
+         layer = "spectra_long")
+
+
+
+
 
