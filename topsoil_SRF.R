@@ -337,7 +337,7 @@ topsoil_reflectance_wide <- topsoil_reflectance_long %>%
   )
 
 # average sample pairs
-topsoil_mean_long_unique <- topsoil_reflectance_long %>%
+topsoil_long_unique <- topsoil_reflectance_long %>%
   mutate(SampleID_base = str_remove(SampleID, "_[0-9]+$")) %>%  # 11001_1 -> 11001
   group_by(SampleID_base, band) %>%
   summarise(
@@ -351,6 +351,23 @@ topsoil_mean_long_unique <- topsoil_reflectance_long %>%
     LC1     = first(LC1),
     .groups = "drop"
   )
+
+# pivot wider
+topsoil_wide_unique <- topsoil_long_unique %>%
+  pivot_wider(
+    id_cols = c(SampleID_base, source, PointID, NUTS_0, SampleN, LC1),
+    names_from = band,
+    values_from = value
+  )
+
+# write both long and wide dfs
+write.csv(topsoil_long_unique,
+          "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_mean_long_unique.csv",
+          row.names = FALSE)
+
+write.csv(topsoil_wide_unique,
+          "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_mean_wide.csv",
+          row.names = FALSE)
 
 
 
@@ -380,4 +397,29 @@ plot_df %>%
   ) +
   theme_minimal()
 
+# add coordinates 
+library(sf)
+
+pts <- st_read("/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/LUCAS2015_topsoildata_20200323/LUCAS_Topsoil_2015_20200323-shapefile/LUCAS_Topsoil_2015_20200323.shp")
+
+# for wide table
+topsoil_wide_sf <- pts %>%
+  left_join(topsoil_wide_unique, by = c("Point_ID" = "PointID"))
+
+# remove NAs
+library(dplyr)
+
+topsoil_wide_sf <- topsoil_wide_sf %>%
+  filter(if_all(starts_with("L_B"), ~ !is.na(.)))
+
+
+# for long table
+topsoil_long_sf <- pts %>%
+  left_join(topsoil_long_unique, by = c("Point_ID" = "PointID"))
+
+# remove NAs
+topsoil_long_sf <- topsoil_long_sf %>%
+  group_by(Point_ID) %>%
+  filter(all(!is.na(band))) %>%
+  ungroup()
 
