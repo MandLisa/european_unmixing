@@ -507,6 +507,70 @@ st_write(
   delete_dsn = TRUE
 )
 
+### do sampling again but account for a wide range of reflectances
+set.seed(42)
+
+n_per_country <- 20
+n_bins <- 5
+
+band_cols <- grep("^L_B", names(topsoil_final_wide), value = TRUE)
+
+topsoil_wide_sub <- topsoil_final_wide %>%
+  # 1) brightness proxy
+  rowwise() %>%
+  mutate(brightness = mean(c_across(all_of(band_cols)), na.rm = TRUE)) %>%
+  ungroup() %>%
+  
+  # 2) quantile bins within each country
+  group_by(NUTS_0) %>%
+  mutate(br_bin = ntile(brightness, n_bins)) %>%
+  ungroup() %>%
+  
+  # 3) sample roughly equally from bins
+  group_by(NUTS_0, br_bin) %>%
+  slice_sample(prop = 1) %>%                     # shuffle within stratum
+  slice_head(n = ceiling(n_per_country / n_bins)) %>%
+  ungroup() %>%
+  
+  # 4) trim to exactly n_per_country per country (shuffle then head)
+  group_by(NUTS_0) %>%
+  slice_sample(prop = 1) %>%                     # shuffle within country
+  slice_head(n = n_per_country) %>%
+  ungroup()
 
 
+### visualise
+
+band_cols <- grep("^L_B", names(topsoil_wide_sub), value = TRUE)
+
+plot_df <- topsoil_wide_sub %>%
+  pivot_longer(
+    cols = all_of(band_cols),
+    names_to = "band",
+    values_to = "reflectance"
+  ) %>%
+  left_join(
+    topsoil_long_unique %>%
+      select(band, cwl) %>%
+      distinct(),
+    by = "band"
+  )
+
+# order bands by wavelength
+band_order <- plot_df %>%
+  distinct(band, cwl) %>%
+  arrange(cwl) %>%
+  pull(band)
+
+plot_df$band <- factor(plot_df$band, levels = band_order)
+
+ggplot(plot_df, aes(x = cwl, y = reflectance)) +
+  geom_boxplot(aes(group = cwl), fill = "grey85", outlier.shape = NA) +
+  geom_jitter(width = 20, alpha = 0.5, size = 1.2) +
+  labs(
+    x = "Wavelength (nm)",
+    y = "Reflectance",
+    title = "Reflectance variability in subsampled LUCAS spectra"
+  ) +
+  theme_minimal()
 
