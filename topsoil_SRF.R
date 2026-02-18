@@ -337,7 +337,7 @@ topsoil_reflectance_wide <- topsoil_reflectance_long %>%
   )
 
 # average sample pairs
-topsoil_mean_long <- topsoil_reflectance_long %>%
+topsoil_mean_long_unique <- topsoil_reflectance_long %>%
   mutate(SampleID_base = str_remove(SampleID, "_[0-9]+$")) %>%  # 11001_1 -> 11001
   group_by(SampleID_base, band) %>%
   summarise(
