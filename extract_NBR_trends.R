@@ -170,9 +170,15 @@ LUCAS_combined_sf_NBR <- LUCAS_combined_sf %>%
   left_join(trend_lut, by = "point_id")
 
 
+
+LUCAS_combined_sf_NBR <- LUCAS_combined_sf_NBR %>%
+  select(-LC1)
+
+
+
 st_write(
   LUCAS_combined_sf_NBR,
-  "/mnt/dss_project/lmandl/_unmixing/_spectral_library/1902/lucas_time_series_NBRTrend.gpkg",
+  "/mnt/dss_project/lmandl/_unmixing/_spectral_library/2502/lucas_time_series_NBRTrend.gpkg",
   layer = "lucas_full",
   delete_layer = TRUE
 )
@@ -259,11 +265,11 @@ library(ggplot2)
 
 # lucas_BAP must be long format with: point_id, letter_group, band, BAP, year (or similar)
 # 1) Make sure band is ordered numeric (important for correct line drawing)
-LUCAS_combined <- LUCAS_combined %>%
+LUCAS_combined_sf_NBRd <- LUCAS_combined_sf_NBR %>%
   mutate(band = as.integer(band))
 
 # 2) Collapse repeated years: one spectrum per point_id (median across years)
-spectra_point <- LUCAS_combined %>%
+spectra_point <- LUCAS_combined_sf_NBR %>%
   group_by(letter_group, point_id, band) %>%
   summarise(BAP = median(BAP, na.rm = TRUE), .groups = "drop")
 
@@ -309,7 +315,7 @@ ggplot() +
 
 library(dplyr)
 
-spectra_point <- LUCAS_combined %>%
+spectra_point <- LUCAS_combined_sf_NBR %>%
   mutate(band = as.integer(band)) %>%
   group_by(biome_cor, letter_group, point_id, band) %>%
   summarise(
@@ -325,7 +331,7 @@ spectra_point_complete <- spectra_point %>%
 
 
 set.seed(1)
-n_per_class <- 8
+n_per_class <- 50
 
 sample_ids <- spectra_point_complete %>%
   distinct(biome_cor, letter_group, point_id) %>%
@@ -402,7 +408,7 @@ library(sf)
 
 years_sel <- c(1990, 2000, 2010, 2020)
 
-ts_df <- lucas_sf_time_series %>%
+ts_df <- LUCAS_combined_sf_NBR %>%
   # if sf, drop geometry for plotting spectra
   st_drop_geometry() %>%
   mutate(
@@ -480,3 +486,106 @@ p1990
 p2000
 p2010
 p2020
+
+
+
+
+library(dplyr)
+library(ggplot2)
+library(sf)
+
+years_sel <- c(1990, 2000, 2010, 2020)
+
+ts_all <- LUCAS_combined_sf_NBR %>%
+  st_drop_geometry() %>%
+  mutate(
+    point_id     = as.character(point_id),
+    year         = as.integer(year),
+    band         = as.integer(band),
+    biome_cor    = ifelse(biome_cor == "Alpine", "Temperate", as.character(biome_cor)),
+    letter_group = as.character(letter_group)
+  ) %>%
+  filter(!is.na(biome_cor)) %>%
+  mutate(
+    letter_group = factor(letter_group, levels = c("A","C","D","E","F")),
+    biome_cor    = factor(biome_cor, levels = c("Boreal","Mediterranean","Temperate"))
+  )
+
+
+F_fixed <- ts_all %>%
+  filter(letter_group == "F") %>%
+  group_by(biome_cor, letter_group, point_id, band) %>%
+  summarise(BAP = median(BAP, na.rm = TRUE), .groups = "drop")
+
+
+
+plot_spectra_year <- function(year_label, n_per_class = 50) {
+  
+  # year-specific spectra for non-F groups only
+  df_year <- ts_all %>%
+    filter(year == year_label, letter_group != "F") %>%
+    select(biome_cor, letter_group, point_id, band, BAP)
+  
+  # inject fixed F and assign current year (so it shows up in that year's plot)
+  df_F <- F_fixed %>%
+    mutate(year = year_label) %>%
+    select(biome_cor, letter_group, point_id, band, BAP)
+  
+  df_plot <- bind_rows(df_year, df_F)
+  
+  # keep only complete 6-band spectra per point within biome×group
+  df_complete <- df_plot %>%
+    group_by(biome_cor, letter_group, point_id) %>%
+    filter(n_distinct(band) == 6) %>%
+    ungroup()
+  
+  # sample point_ids per biome×group
+  set.seed(1)
+  sample_ids <- df_complete %>%
+    distinct(biome_cor, letter_group, point_id) %>%
+    group_by(biome_cor, letter_group) %>%
+    group_modify(~ slice_sample(.x, n = min(n_per_class, nrow(.x)))) %>%
+    ungroup()
+  
+  df_sample <- df_complete %>%
+    semi_join(sample_ids, by = c("biome_cor","letter_group","point_id"))  # preserves rows safely
+  
+  # class median per biome×group×band
+  df_med <- df_complete %>%
+    group_by(biome_cor, letter_group, band) %>%
+    summarise(med = median(BAP, na.rm = TRUE), .groups = "drop")
+  
+  ggplot() +
+    geom_line(
+      data = df_sample,
+      aes(band, BAP, group = interaction(biome_cor, letter_group, point_id)),
+      linewidth = 0.35,
+      alpha = 0.20,
+      color = "#135861"
+    ) +
+    geom_line(
+      data = df_med,
+      aes(band, med),
+      linewidth = 1.0,
+      color = "black"
+    ) +
+    facet_grid(biome_cor ~ letter_group) +
+    theme_bw() +
+    labs(
+      x = "Band",
+      y = "BAP",
+      title = paste0(" — ", year_label,
+                     " ")
+    )
+}
+
+
+
+p1990 <- plot_spectra_year(1990)
+p2000 <- plot_spectra_year(2000)
+p2010 <- plot_spectra_year(2010)
+p2020 <- plot_spectra_year(2020)
+
+p1990; p2000; p2010; p2020
+
+
