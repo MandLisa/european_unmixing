@@ -220,7 +220,7 @@ ggplot(lucas_unique_sf) +
 
 library(dplyr)
 
-spectra_summary <- LUCAS_combined%>%
+spectra_summary <- LUCAS_combined %>%
   group_by(letter_group, band) %>%
   summarise(
     median_BAP = median(BAP, na.rm=TRUE),
@@ -261,26 +261,26 @@ library(ggplot2)
 
 # lucas_BAP must be long format with: point_id, letter_group, band, BAP, year (or similar)
 # 1) Make sure band is ordered numeric (important for correct line drawing)
-lucas_with_biome <- lucas_with_biome %>%
+LUCAS_combined <- LUCAS_combined %>%
   mutate(band = as.integer(band))
 
 # 2) Collapse repeated years: one spectrum per point_id (median across years)
-spectra_point <- lucas_with_biome %>%
-  group_by(letter_group, PointID, band) %>%
+spectra_point <- LUCAS_combined %>%
+  group_by(letter_group, point_id, band) %>%
   summarise(BAP = median(BAP, na.rm = TRUE), .groups = "drop")
 
 # 3) Sample 5–10 point spectra per class
-n_per_class <- 80
+n_per_class <- 100
 set.seed(1)
 
 sample_ids <- spectra_point %>%
-  distinct(letter_group,PointID) %>%
+  distinct(letter_group,point_id) %>%
   group_by(letter_group) %>%
   group_modify(~ slice_sample(.x, n = min(n_per_class, nrow(.x)))) %>%
   ungroup()
 
 spectra_sample <- spectra_point %>%
-  inner_join(sample_ids, by = c("letter_group", "PointID"))
+  inner_join(sample_ids, by = c("letter_group", "point_id"))
 
 # 4) Class-level summary (median across points) for a thick reference line
 spectra_class <- spectra_point %>%
@@ -291,7 +291,7 @@ spectra_class <- spectra_point %>%
 ggplot() +
   geom_line(
     data = spectra_sample,
-    aes(x = band, y = BAP, group =PointID),
+    aes(x = band, y = BAP, group =point_id),
     linewidth = 0.4,
     alpha = 0.2,
     color = "#135861"
@@ -304,6 +304,94 @@ ggplot() +
   ) +
   facet_wrap(~letter_group) +
   theme_bw() +
-  labs(x = "Band", y = "BAP", title = "Spectral signatures by letter group (point-level, median across years)")
+  labs(x = "Band", y = "Reflectance", title = "")
 
 
+
+
+library(dplyr)
+
+spectra_point <- LUCAS_combined %>%
+  mutate(band = as.integer(band)) %>%
+  group_by(biome_cor, letter_group, point_id, band) %>%
+  summarise(
+    BAP = median(BAP, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+spectra_point_complete <- spectra_point %>%
+  group_by(biome_cor, letter_group, point_id) %>%
+  filter(n_distinct(band) == 6) %>%
+  ungroup()
+
+
+set.seed(1)
+n_per_class <- 8
+
+sample_ids <- spectra_point_complete %>%
+  distinct(biome_cor, letter_group, point_id) %>%
+  group_by(biome_cor, letter_group) %>%
+  group_modify(~ slice_sample(.x, n = min(n_per_class, nrow(.x)))) %>%
+  ungroup()
+
+spectra_sample <- spectra_point_complete %>%
+  inner_join(sample_ids,
+             by = c("biome_cor","letter_group","point_id"))
+
+
+spectra_class <- spectra_point_complete %>%
+  group_by(biome_cor, letter_group, band) %>%
+  summarise(
+    med = median(BAP, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+library(dplyr)
+
+spectra_sample_clean <- spectra_sample %>%
+  mutate(
+    biome_cor = ifelse(biome_cor == "Alpine", "Temperate", biome_cor)
+  ) %>%
+  filter(!is.na(biome_cor))
+
+
+spectra_sample_clean$biome_cor <- factor(
+  spectra_sample_clean$biome_cor,
+  levels = c("Boreal","Mediterranean","Temperate")
+)
+
+spectra_class_clean$biome_cor <- factor(
+  spectra_class_clean$biome_cor,
+  levels = c("Boreal","Mediterranean","Temperate")
+)
+
+ggplot() +
+  
+  geom_line(
+    data = spectra_sample_clean %>%
+      filter(!is.na(biome_cor)),
+    aes(band, BAP,
+        group = interaction(biome_cor, letter_group, point_id)),
+    linewidth = 0.4,
+    alpha = 0.25,
+    color = "#135861"
+  ) +
+  
+  geom_line(
+    data = spectra_class_clean %>%
+      filter(!is.na(biome_cor)),
+    aes(band, med),
+    linewidth = 1,
+    color = "black"
+  ) +
+  
+  facet_grid(biome_cor ~ letter_group) +
+  
+  theme_bw() +
+  
+  labs(
+    x = "Band",
+    y = "BAP",
+    title = "Spectral signatures by biome and letter group"
+  )
