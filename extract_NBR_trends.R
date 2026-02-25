@@ -153,27 +153,25 @@ st_write(
 library(sf)
 library(dplyr)
 
-trend_lut <- lucas_unique_sf |>
-  st_drop_geometry() |>
-  select(point_id, nbr_sen_slope) |>
+lucas_unique_sf <- lucas_unique_sf %>%
+  mutate(point_id = as.character(point_id))
+
+LUCAS_combined_sf <- LUCAS_combined_sf %>%
+  mutate(point_id = as.character(point_id))
+
+
+trend_lut <- lucas_unique_sf %>%
+  st_drop_geometry() %>%
+  select(point_id, nbr_sen_slope) %>%
   distinct(point_id, .keep_all = TRUE)
 
 
-lucas_sf_time_series <- lucas_sf |>
+LUCAS_combined_sf_NBR <- LUCAS_combined_sf %>%
   left_join(trend_lut, by = "point_id")
 
 
-# should be TRUE if every point_id found a match
-mean(!is.na(lucas_sf_time_series$nbr_sen_slope))
-
-# check one example point_id has same trend across years
-lucas_sf_time_series |>
-  filter(point_id == lucas_sf_time_series$point_id[1]) |>
-  distinct(point_id, nbr_sen_slope)
-
-
 st_write(
-  lucas_sf_time_series,
+  LUCAS_combined_sf_NBR,
   "/mnt/dss_project/lmandl/_unmixing/_spectral_library/1902/lucas_time_series_NBRTrend.gpkg",
   layer = "lucas_full",
   delete_layer = TRUE
@@ -395,3 +393,90 @@ ggplot() +
     y = "BAP",
     title = "Spectral signatures by biome and letter group"
   )
+
+
+
+library(dplyr)
+library(ggplot2)
+library(sf)
+
+years_sel <- c(1990, 2000, 2010, 2020)
+
+ts_df <- lucas_sf_time_series %>%
+  # if sf, drop geometry for plotting spectra
+  st_drop_geometry() %>%
+  mutate(
+    point_id    = as.character(point_id),
+    year        = as.integer(year),
+    band        = as.integer(band),
+    biome_cor   = ifelse(biome_cor == "Alpine", "Temperate", biome_cor),
+    biome_cor   = ifelse(is.na(biome_cor), NA_character_, biome_cor),
+    letter_group = as.character(letter_group)
+  ) %>%
+  filter(year %in% years_sel, !is.na(biome_cor))
+
+
+ts_df <- ts_df %>%
+  mutate(
+    letter_group = factor(letter_group, levels = c("A","C","D","E","F")),
+    biome_cor    = factor(biome_cor, levels = c("Boreal","Mediterranean","Temperate"))
+  )
+
+
+plot_spectra_year <- function(df_year, year_label, n_per_class = 50) {
+  
+  # keep only complete 6-band spectra per point within biome×group
+  df_complete <- df_year %>%
+    group_by(biome_cor, letter_group, point_id) %>%
+    filter(n_distinct(band) == 6) %>%
+    ungroup()
+  
+  # sample point_ids per biome×group (robust if small groups)
+  set.seed(1)
+  sample_ids <- df_complete %>%
+    distinct(biome_cor, letter_group, point_id) %>%
+    group_by(biome_cor, letter_group) %>%
+    group_modify(~ slice_sample(.x, n = min(n_per_class, nrow(.x)))) %>%
+    ungroup()
+  
+  df_sample <- df_complete %>%
+    inner_join(sample_ids, by = c("biome_cor","letter_group","point_id"))
+  
+  # class median per biome×group×band
+  df_med <- df_complete %>%
+    group_by(biome_cor, letter_group, band) %>%
+    summarise(med = median(BAP, na.rm = TRUE), .groups = "drop")
+  
+  ggplot() +
+    geom_line(
+      data = df_sample,
+      aes(band, BAP, group = interaction(biome_cor, letter_group, point_id)),
+      linewidth = 0.35,
+      alpha = 0.20,
+      color = "#135861"
+    ) +
+    geom_line(
+      data = df_med,
+      aes(band, med),
+      linewidth = 1.0,
+      color = "black"
+    ) +
+    facet_grid(biome_cor ~ letter_group) +
+    theme_bw() +
+    labs(
+      x = "Band",
+      y = "BAP",
+      title = paste0("Spectral signatures by biome and letter group — ", year_label)
+    )
+}
+
+
+p1990 <- plot_spectra_year(filter(ts_df, year == 1990), 1990)
+p2000 <- plot_spectra_year(filter(ts_df, year == 2000), 2000)
+p2010 <- plot_spectra_year(filter(ts_df, year == 2010), 2010)
+p2020 <- plot_spectra_year(filter(ts_df, year == 2020), 2020)
+
+p1990
+p2000
+p2010
+p2020
