@@ -11,7 +11,7 @@
 # ============================================================
 
 # ----------------------------
-# Packages
+# Package
 # ----------------------------
 suppressPackageStartupMessages({
   library(terra)      # raster + vector IO/extraction
