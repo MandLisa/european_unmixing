@@ -35,8 +35,8 @@ out_csv     <- "/mnt/eo/EU_unmixing/data/LUCAS/candidates_BAPs.csv"
 topsoil_csv <- "/mnt/dss_project/lmandl/_unmixing/esdac_topsoil/2015/final_datasets/topsoil_wide_subset_varaware.csv"
 biome_gpkg  <- "/mnt/dss_project/lmandl/_unmixing/_spectral_library/1902/terrestrial_ecoregions_olson_europe.gpkg"
 
-out_gpkg_ts <- "/mnt/dss_project/lmandl/_unmixing/_spectral_library/1902/LUCAS_time_series.gpkg"
-out_gpkg_uq <- "/mnt/dss_project/lmandl/_unmixing/_spectral_library/1902/LUCAS_unique.gpkg"
+out_gpkg_ts <- "/mnt/dss_project/lmandl/_unmixing/_spectral_library/2502/LUCAS_time_series.gpkg"
+out_gpkg_uq <- "/mnt/dss_project/lmandl/_unmixing/_spectral_library/2502/LUCAS_unique.gpkg"
 
 years_min   <- 1984
 years_max   <- 2024
