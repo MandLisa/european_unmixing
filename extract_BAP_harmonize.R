@@ -354,8 +354,8 @@ lucas_with_biome <- lucas_with_biome %>%
 # 8) Combine time series (candidates) + topsoil spectra
 # ============================================================
 LUCAS_combined <- bind_rows(
-  LUCAS_BAP_attr,
-  lucas_with_biome
+  LUCAS_BAP_attr  %>% mutate(point_id = as.character(point_id)),
+  lucas_with_biome %>% mutate(point_id = as.character(point_id))
 )
 
 # Ensure coordx/coordy exist in EPSG:3035 derived from lon/lat
