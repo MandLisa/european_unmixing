@@ -155,26 +155,26 @@ library(dplyr)
 
 trend_lut <- lucas_unique_sf |>
   st_drop_geometry() |>
-  select(point_id, nbr_sen_slope, nbr_n_years) |>
+  select(point_id, nbr_sen_slope) |>
   distinct(point_id, .keep_all = TRUE)
 
 
-lucas_sf <- lucas_sf |>
+lucas_sf_time_series <- lucas_sf |>
   left_join(trend_lut, by = "point_id")
 
 
 # should be TRUE if every point_id found a match
-mean(!is.na(lucas_sf$nbr_sen_slope))
+mean(!is.na(lucas_sf_time_series$nbr_sen_slope))
 
 # check one example point_id has same trend across years
-lucas_sf |>
-  filter(point_id == lucas_sf$point_id[1]) |>
-  distinct(point_id, nbr_sen_slope, nbr_n_years)
+lucas_sf_time_series |>
+  filter(point_id == lucas_sf_time_series$point_id[1]) |>
+  distinct(point_id, nbr_sen_slope)
 
 
 st_write(
-  lucas_sf,
-  "/mnt/dss_project/lmandl/_unmixing/_spectral_library/1902/lucas_full_with_NBRtrend.gpkg",
+  lucas_sf_time_series,
+  "/mnt/dss_project/lmandl/_unmixing/_spectral_library/1902/lucas_time_series_NBRTrend.gpkg",
   layer = "lucas_full",
   delete_layer = TRUE
 )
