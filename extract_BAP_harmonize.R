@@ -421,7 +421,7 @@ sf::st_write(
 )
 
 # ============================================================
-# 10) Plot: spectral signatures by year for 10 random points
+# 10) Plot: spectral signatures by year for 10 random point
 # ============================================================
 set.seed(1)
 
